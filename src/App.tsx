@@ -1,24 +1,18 @@
 import React from 'react';
-import logo from './logo.svg';
 import './App.css';
+import TemplateEditor from './components/TemplateEditor';
 
 function App() {
   return (
     <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.tsx</code> and save to reload.
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
+      <header className="bg-blue-600 shadow-lg">
+        <div className="max-w-7xl mx-auto py-4 px-4 sm:px-6 lg:px-8">
+          <h1 className="text-2xl font-bold text-white">Template Editor</h1>
+        </div>
       </header>
+      <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+        <TemplateEditor />
+      </main>
     </div>
   );
 }
