@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect, ChangeEvent } from 'react';
+import React, { useRef, useState, useEffect, ChangeEvent, useCallback } from 'react';
 import { componentStore, ComponentType, ComponentMetadata } from '../utils/ComponentStore';
 import ComponentModal from './ComponentModal';
 import FillTemplateModal from './FillTemplateModal';
@@ -6,21 +6,159 @@ import FillTemplateModal from './FillTemplateModal';
 // Define the template data structure for export/import
 interface TemplateData {
   version: string;
-  content: string;
+  sections: Section[];
   components: ComponentMetadata[];
 }
+
+// Define the section data structure
+interface Section {
+  id: string;
+  title: string;
+  content: string;
+  enabled: boolean;
+}
+
+// Create ID generators for sections and components to ensure uniqueness
+let sectionIdCounter = 0;
+const generateSectionId = (): string => {
+  return `section-${Date.now()}-${sectionIdCounter++}`;
+};
+
+let componentIdCounter = 0;
+const generateComponentId = (): string => {
+  return `component-${Date.now()}-${componentIdCounter++}`;
+};
 
 const TemplateEditor: React.FC = () => {
   const editorRef = useRef<HTMLDivElement>(null);
   const placeholderRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [components, setComponents] = useState<ComponentMetadata[]>([]);
+  const [sections, setSections] = useState<Section[]>([]);
   const [hasContent, setHasContent] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [selectedComponent, setSelectedComponent] = useState<ComponentMetadata | null>(null);
   const [isLocked, setIsLocked] = useState(false);
   const [fillModalOpen, setFillModalOpen] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [initialized, setInitialized] = useState(false); // Track if we've already initialized
+  
+  // Function to create a new section with guaranteed unique ID
+  const addSection = useCallback(() => {
+    const newSection: Section = {
+      id: generateSectionId(),
+      title: `Section ${sections.length + 1}`,
+      content: '',
+      enabled: true
+    };
+    
+    setSections(prevSections => [...prevSections, newSection]);
+  }, [sections.length]);
+  
+  // Initialize with a default section if none exists, but only once
+  useEffect(() => {
+    // Only add a default section if we have no sections AND we haven't initialized yet
+    if (sections.length === 0 && !initialized) {
+      const defaultSection: Section = {
+        id: generateSectionId(),
+        title: 'Section 1',
+        content: '',
+        enabled: true
+      };
+      
+      setSections([defaultSection]);
+      setInitialized(true);
+    }
+  }, [sections.length, initialized]);
+  
+  // Effect to handle populating section content after import or changes
+  useEffect(() => {
+    // Skip if no sections exist
+    if (sections.length === 0) {
+      return;
+    }
+    
+    let injectionCompleted = false;
+    
+    // First attempt - try immediate injection
+    const injectSectionContent = () => {
+      sections.forEach(section => {
+        // Skip sections with no content
+        if (!section.content || section.content.trim() === '') {
+          return;
+        }
+        
+        // Find the section element in the DOM
+        const sectionElement = document.getElementById(section.id);
+        if (!sectionElement) {
+          console.warn(`Could not find DOM element for section ${section.id}`);
+          return;
+        }
+        
+        // Only set the HTML if it's different from current content
+        if (sectionElement.innerHTML !== section.content) {
+          console.log(`Injecting content into section ${section.id}`);
+          sectionElement.innerHTML = section.content;
+          
+          // Process components to ensure they're styled correctly
+          processImportedComponents(sectionElement);
+          injectionCompleted = true;
+        }
+      });
+      
+      // Update hasContent flag based on first section
+      if (sections.length > 0 && sections[0].content) {
+        setHasContent(sections[0].content.trim().length > 0);
+      }
+    };
+    
+    // Try immediate injection
+    injectSectionContent();
+    
+    // Also set up a delayed injection as a fallback
+    const timeoutId = setTimeout(() => {
+      if (!injectionCompleted) {
+        console.log("Attempting delayed content injection");
+        injectSectionContent();
+      }
+    }, 200);
+    
+    return () => clearTimeout(timeoutId);
+  }, [sections]); // Run whenever sections change
+  
+  // Function to update a section's title
+  const updateSectionTitle = (sectionId: string, title: string) => {
+    setSections(sections.map(section => 
+      section.id === sectionId ? { ...section, title } : section
+    ));
+  };
+  
+  // Function to update a section's content
+  const updateSectionContent = (sectionId: string, content: string) => {
+    setSections(sections.map(section => 
+      section.id === sectionId ? { ...section, content } : section
+    ));
+  };
+  
+  // Function to remove a section
+  const removeSection = (sectionId: string) => {
+    // Don't allow removing the last section
+    if (sections.length <= 1) {
+      setErrorMessage("Cannot remove the last section");
+      return;
+    }
+    
+    setSections(sections.filter(section => section.id !== sectionId));
+  };
+  
+  // Function to toggle a section's enabled state
+  // Used in the section state management for future functionality 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars  
+  const toggleSectionEnabled = (sectionId: string) => {
+    setSections(sections.map(section => 
+      section.id === sectionId ? { ...section, enabled: !section.enabled } : section
+    ));
+  };
   
   // Clear error message after 3 seconds
   useEffect(() => {
@@ -160,6 +298,8 @@ const TemplateEditor: React.FC = () => {
   }, [isLocked]);
 
   // Function to scan the editor and get a list of visible component IDs in their visual order
+  // This function is no longer used directly, but kept for documentation purposes
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const getVisibleComponentIds = (): string[] => {
     if (!editorRef.current) return [];
     
@@ -180,16 +320,28 @@ const TemplateEditor: React.FC = () => {
 
   // Function to get component IDs in the order they appear in the editor DOM
   const getOrderedVisibleComponentIds = (): string[] => {
-    if (!editorRef.current) return [];
+    // Get all visible components across all sections
+    const visibleComponentIds: string[] = [];
     
-    // Get all components in the editor in the exact order they appear in the DOM
-    // This preserves the visual ordering that the user sees
-    const componentElements = editorRef.current.querySelectorAll('[data-component]');
+    // Process each section to find components
+    sections.forEach(section => {
+      const sectionElement = document.getElementById(section.id);
+      if (!sectionElement) return;
+      
+      // Find all components in this section
+      const componentElements = sectionElement.querySelectorAll('[data-component]');
+      
+      // Extract IDs and add them to our list
+      Array.from(componentElements).forEach(element => {
+        const id = element.getAttribute('data-id');
+        if (id) {
+          visibleComponentIds.push(id);
+        }
+      });
+    });
     
-    // Convert NodeList to Array and extract ordered IDs
-    return Array.from(componentElements)
-      .map(element => element.getAttribute('data-id'))
-      .filter((id): id is string => id !== null); // Filter out any null values
+    console.log(`Found ${visibleComponentIds.length} components across all sections`);
+    return visibleComponentIds;
   };
 
   // Function to toggle template lock state
@@ -213,52 +365,28 @@ const TemplateEditor: React.FC = () => {
     }
   };
   
-  // Function to check if selection is inside editor
-  const isSelectionInsideEditor = (): boolean => {
-    const selection = window.getSelection();
-    if (!selection || !selection.rangeCount || !editorRef.current) return false;
-    
-    const range = selection.getRangeAt(0);
-    return !!editorRef.current.contains(range.commonAncestorContainer);
-  };
-  
-  // Function to place cursor at the end of the editor
-  const moveCursorToEndOfEditor = () => {
-    if (!editorRef.current) return;
-    
-    // Focus the editor
-    editorRef.current.focus();
-    
-    // Create a new range at the end of the editor
-    const range = document.createRange();
-    range.selectNodeContents(editorRef.current);
-    range.collapse(false); // Collapse to end
-    
-    // Apply the range to the selection
-    const selection = window.getSelection();
-    if (selection) {
-      selection.removeAllRanges();
-      selection.addRange(range);
-    }
-  };
-  
   // Function to insert component at current cursor position
   const insertComponent = (type: ComponentType) => {
     // Don't allow inserting components if template is locked
     if (isLocked) return;
     
-    // First, check if current selection is inside the editor
-    if (!isSelectionInsideEditor()) {
-      // Selection is not inside editor, show error and move cursor to end
-      setErrorMessage("Click inside the editor first to insert a field");
-      
-      // Focus editor and move cursor to end
-      moveCursorToEndOfEditor();
+    // First, check if current selection is inside any of the section editors
+    const selection = window.getSelection();
+    if (!selection || !selection.rangeCount) {
+      setErrorMessage("Click inside a section first to insert a field");
+      return;
+    }
+    
+    const range = selection.getRangeAt(0);
+    const sectionElement = findSectionElement(range.commonAncestorContainer as HTMLElement);
+    
+    if (!sectionElement) {
+      setErrorMessage("Click inside a section first to insert a field");
       return;
     }
     
     // Generate unique ID
-    const id = `component-${Date.now()}`;
+    const id = generateComponentId();
     
     // Create label based on type
     let label = '';
@@ -271,13 +399,13 @@ const TemplateEditor: React.FC = () => {
         break;
       case 'dropdown':
         label = 'Dropdown: Status';
-        // Initialize dropdown with empty options array
-        attributes.options = [];
+        // Initialize dropdown with empty options array and default options
+        attributes.options = ['Option 1', 'Option 2', 'Option 3'];
         break;
       case 'multi-text-field':
         label = 'Multi Text Field';
-        // Initialize multi-text field with empty options array
-        attributes.options = [];
+        // Initialize multi-text field with empty options array and default options
+        attributes.options = ['Item 1', 'Item 2', 'Item 3'];
         break;
     }
     
@@ -295,75 +423,118 @@ const TemplateEditor: React.FC = () => {
     // Update local state
     setComponents([...components, newComponent]);
     
-    // Get current selection
-    const selection = window.getSelection();
-    if (selection && selection.rangeCount > 0 && editorRef.current) {
-      // Get the current range
-      const range = selection.getRangeAt(0);
-      
-      // Create the component element
-      const componentElement = document.createElement('span');
-      componentElement.id = id;
-      componentElement.className = `relative inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium ${getComponentStyles(type)} mx-1 group cursor-pointer`;
-      componentElement.contentEditable = 'false';
-      componentElement.setAttribute('data-component', 'true');
-      componentElement.setAttribute('data-type', type);
-      componentElement.setAttribute('data-id', id);
-      componentElement.setAttribute('title', 'Double-click to edit'); // Add hint for users
-      
-      // Create label and delete button
-      const labelSpan = document.createElement('span');
-      labelSpan.textContent = label;
-      componentElement.appendChild(labelSpan);
-      
-      // Create delete button (with aria-hidden to exclude from copied content)
-      const deleteButton = document.createElement('span');
-      deleteButton.className = 'ml-1.5 text-gray-500 hover:text-red-500 cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity';
-      deleteButton.textContent = '×';
-      deleteButton.setAttribute('data-action', 'delete');
-      deleteButton.setAttribute('aria-hidden', 'true'); // Hide from assistive tech and copy operations
-      deleteButton.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (!isLocked) {
-          removeComponent(id, componentElement);
-        }
-      });
-      componentElement.appendChild(deleteButton);
-      
-      // Insert the component
-      range.deleteContents();
-      range.insertNode(componentElement);
-      
-      // Add a space after the component if needed
-      const spaceNode = document.createTextNode('\u00A0');
-      range.setStartAfter(componentElement);
-      range.insertNode(spaceNode);
-      
-      // Move cursor after the inserted component and space
-      range.setStartAfter(spaceNode);
-      range.setEndAfter(spaceNode);
-      selection.removeAllRanges();
-      selection.addRange(range);
-      
-      // Ensure editor maintains focus
-      editorRef.current.focus();
+    // Create the component element
+    const componentElement = document.createElement('span');
+    componentElement.id = id;
+    componentElement.className = `relative inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium ${getComponentStyles(type)} mx-1 group cursor-pointer`;
+    componentElement.contentEditable = 'false';
+    componentElement.setAttribute('data-component', 'true');
+    componentElement.setAttribute('data-type', type);
+    componentElement.setAttribute('data-id', id);
+    componentElement.setAttribute('title', 'Double-click to edit'); // Add hint for users
+    
+    // Create label and delete button
+    const labelSpan = document.createElement('span');
+    labelSpan.textContent = label;
+    componentElement.appendChild(labelSpan);
+    
+    // Create delete button (with aria-hidden to exclude from copied content)
+    const deleteButton = document.createElement('span');
+    deleteButton.className = 'ml-1.5 text-gray-500 hover:text-red-600 cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity';
+    deleteButton.textContent = '×';
+    deleteButton.setAttribute('data-action', 'delete');
+    deleteButton.setAttribute('aria-hidden', 'true'); // Hide from assistive tech and copy operations
+    deleteButton.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!isLocked) {
+        removeComponent(id, componentElement);
+      }
+    });
+    componentElement.appendChild(deleteButton);
+    
+    // Insert the component
+    range.deleteContents();
+    range.insertNode(componentElement);
+    
+    // Add a space after the component if needed
+    const spaceNode = document.createTextNode('\u00A0');
+    range.setStartAfter(componentElement);
+    range.insertNode(spaceNode);
+    
+    // Move cursor after the inserted component and space
+    range.setStartAfter(spaceNode);
+    range.setEndAfter(spaceNode);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    
+    // Ensure section content gets updated in the state
+    const sectionId = sectionElement.id;
+    if (sectionId) {
+      const sectionContent = sectionElement.innerHTML;
+      updateSectionContent(sectionId, sectionContent);
     }
+    
+    // Ensure section maintains focus
+    sectionElement.focus();
   };
 
+  // Function to find the section element from a given node
+  const findSectionElement = (node: Node | null): HTMLElement | null => {
+    if (!node) return null;
+    
+    // Check if the node is an element
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      const element = node as HTMLElement;
+      
+      // Check if it's one of our sections (has an ID starting with 'section-')
+      if (element.id && element.id.startsWith('section-')) {
+        return element;
+      }
+    }
+    
+    // Look up the tree
+    if (node.parentNode) {
+      return findSectionElement(node.parentNode);
+    }
+    
+    return null;
+  };
+  
   // Function to open fill template modal
   const openFillTemplate = () => {
     // Get all available components from the store
     const allComponents = componentStore.getAllComponents();
     
-    // Get ordered list of visible component IDs
+    // Before opening the modal, ensure that all sections' content is up-to-date
+    // This is crucial for finding all components in all sections
+    sections.forEach(section => {
+      const sectionElement = document.getElementById(section.id);
+      if (!sectionElement) return;
+      
+      // Update the section content in the state
+      const sectionContent = sectionElement.innerHTML;
+      updateSectionContent(section.id, sectionContent);
+    });
+    
+    // Get ordered list of visible component IDs from all sections
     const orderedVisibleIds = getOrderedVisibleComponentIds();
     
     console.log(`Found ${orderedVisibleIds.length} visible components in editor`);
+    orderedVisibleIds.forEach(id => {
+      const comp = allComponents.find(c => c.id === id);
+      if (comp) {
+        console.log(`- ${id}: ${comp.label} (${comp.type})`);
+      } else {
+        console.log(`- ${id}: Component not found in store!`);
+      }
+    });
     
     // Filter and sort components to match the visual order in the editor
     const orderedVisibleComponents = orderedVisibleIds
       .map(id => allComponents.find(comp => comp.id === id))
       .filter((comp): comp is ComponentMetadata => comp !== undefined);
+    
+    console.log(`Passing ${orderedVisibleComponents.length} components to Fill Template modal`);
     
     // Update the components state with only the visible ones in correct order
     setComponents(orderedVisibleComponents);
@@ -388,7 +559,11 @@ const TemplateEditor: React.FC = () => {
     // Create template data object
     const templateData: TemplateData = {
       version: '1.0',
-      content: editorRef.current?.innerHTML || '',
+      sections: sections.map(section => ({
+        ...section,
+        // Get the current content from the DOM for each section
+        content: document.getElementById(section.id)?.innerHTML || section.content
+      })),
       components: orderedVisibleComponents
     };
     
@@ -428,7 +603,7 @@ const TemplateEditor: React.FC = () => {
         const templateData = JSON.parse(event.target?.result as string) as TemplateData;
         
         // Validate the template data structure
-        if (!templateData.content || !Array.isArray(templateData.components)) {
+        if (!templateData.sections || !Array.isArray(templateData.components)) {
           throw new Error('Invalid template file format');
         }
         
@@ -450,8 +625,15 @@ const TemplateEditor: React.FC = () => {
           
           // Ensure options arrays exist for dropdown and multi-text fields
           if (component.type === 'dropdown' || component.type === 'multi-text-field') {
-            if (sanitized.attributes) {
-              sanitized.attributes.options = sanitized.attributes.options || [];
+            if (!sanitized.attributes) {
+              sanitized.attributes = {};
+            }
+            
+            // Ensure options is always an array
+            if (!sanitized.attributes.options || !Array.isArray(sanitized.attributes.options)) {
+              sanitized.attributes.options = component.type === 'dropdown' 
+                ? ['Option 1', 'Option 2', 'Option 3'] 
+                : ['Item 1', 'Item 2', 'Item 3'];
             }
           }
           
@@ -463,9 +645,48 @@ const TemplateEditor: React.FC = () => {
           componentStore.addComponent(component);
         });
         
-        // Update editor content
-        if (editorRef.current) {
-          editorRef.current.innerHTML = templateData.content;
+        // Update sections with imported data
+        if (Array.isArray(templateData.sections) && templateData.sections.length > 0) {
+          // Sanitize imported sections
+          const sanitizedSections = templateData.sections.map(section => ({
+            id: section.id || generateSectionId(),
+            title: section.title || '',
+            content: section.content || '',
+            enabled: section.enabled !== undefined ? section.enabled : true
+          }));
+          
+          // Update sections state
+          setSections(sanitizedSections);
+          
+          // Add a default section if none were imported
+          if (sanitizedSections.length === 0) {
+            addSection();
+          }
+          
+          // After a short delay, directly inject section content to handle the DOM update
+          // This is a fallback in case the useEffect doesn't trigger properly
+          setTimeout(() => {
+            sanitizedSections.forEach(section => {
+              const sectionElement = document.getElementById(section.id);
+              if (sectionElement && section.content) {
+                console.log(`Direct injection into section ${section.id} during import`);
+                sectionElement.innerHTML = section.content;
+                
+                // Immediately scan for any component elements in the injected content
+                processImportedComponents(sectionElement);
+              }
+            });
+          }, 200);
+        } else {
+          // If no sections in imported template, create a default one with the content
+          const newSection: Section = {
+            id: generateSectionId(),
+            title: 'Imported Content',
+            content: '',
+            enabled: true
+          };
+          
+          setSections([newSection]);
         }
         
         // Update components state
@@ -488,6 +709,94 @@ const TemplateEditor: React.FC = () => {
     
     // Reset file input
     e.target.value = '';
+  };
+  
+  // Helper function to process components in imported content
+  const processImportedComponents = (parentElement: HTMLElement) => {
+    // Find all component elements - some may have data-component attribute, others may just have an ID
+    const allSpans = parentElement.querySelectorAll('span');
+    const processedIds = new Set<string>();
+    let processedCount = 0;
+    
+    // First, try to find elements with data-component attribute
+    const componentElements = parentElement.querySelectorAll('[data-component]');
+    console.log(`Found ${componentElements.length} elements with data-component in content`);
+    
+    // Process elements with the data-component attribute
+    componentElements.forEach(componentEl => {
+      const id = componentEl.getAttribute('data-id');
+      if (!id) return;
+      
+      processElement(componentEl as HTMLElement, id);
+      processedIds.add(id);
+      processedCount++;
+    });
+    
+    // Next, look for elements that have IDs matching components in the store
+    // but might be missing the data-component attribute
+    allSpans.forEach(span => {
+      const id = span.getAttribute('id');
+      if (!id || processedIds.has(id)) return;
+      
+      // Check if this ID exists in the component store
+      const component = componentStore.getComponent(id);
+      if (component) {
+        console.log(`Found component by ID: ${id} (${component.type})`);
+        processElement(span as HTMLElement, id);
+        processedIds.add(id);
+        processedCount++;
+      }
+    });
+    
+    console.log(`Processed ${processedCount} total components in content`);
+    
+    // Helper function to process a single component element
+    function processElement(span: HTMLElement, id: string) {
+      // Get the component metadata from store
+      const component = componentStore.getComponent(id);
+      if (!component) {
+        console.warn(`Component ${id} not found in store during processing`);
+        return;
+      }
+      
+      // Re-apply proper styling and attributes to the component element
+      // Set component attributes
+      span.setAttribute('data-component', 'true');
+      span.setAttribute('data-type', component.type);
+      span.setAttribute('data-id', id);
+      span.setAttribute('title', 'Double-click to edit'); 
+      span.id = id; // Ensure ID is set
+      span.contentEditable = 'false';
+      
+      // Apply correct styling
+      span.className = `relative inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium ${getComponentStyles(component.type)} mx-1 group cursor-pointer`;
+      
+      // Update the label text if needed
+      let labelSpan = span.querySelector('span:not([data-action="delete"])');
+      if (!labelSpan) {
+        // Create label span if it doesn't exist
+        labelSpan = document.createElement('span');
+        span.textContent = ''; // Clear existing text
+        span.appendChild(labelSpan);
+      }
+      labelSpan.textContent = component.label;
+      
+      // Add delete button if missing
+      if (!span.querySelector('[data-action="delete"]')) {
+        const deleteButton = document.createElement('span');
+        deleteButton.className = 'ml-1.5 text-gray-500 hover:text-red-600 cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity';
+        deleteButton.textContent = '×';
+        deleteButton.setAttribute('data-action', 'delete');
+        deleteButton.setAttribute('aria-hidden', 'true'); 
+        deleteButton.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (!isLocked) {
+            removeComponent(id, span);
+          }
+        });
+        span.appendChild(deleteButton);
+      }
+    }
   };
   
   // Function to trigger file input click
@@ -518,9 +827,20 @@ const TemplateEditor: React.FC = () => {
     
     // Ensure options arrays exist for dropdown and multi-text fields
     if (updatedMetadata.type === 'dropdown' || updatedMetadata.type === 'multi-text-field') {
-      // We know attributes exists because we initialize it above
-      if (sanitizedMetadata.attributes) {
-        sanitizedMetadata.attributes.options = sanitizedMetadata.attributes.options || [];
+      // We know attributes exists because we initialize it above, but TypeScript might not
+      const attributes = sanitizedMetadata.attributes || {};
+      sanitizedMetadata.attributes = attributes;
+      
+      if (!attributes.options || !Array.isArray(attributes.options)) {
+        // Provide default options if missing
+        attributes.options = updatedMetadata.type === 'dropdown' 
+          ? ['Option 1', 'Option 2', 'Option 3'] 
+          : ['Item 1', 'Item 2', 'Item 3'];
+      } else if (attributes.options.length === 0) {
+        // If empty array, add default options
+        attributes.options = updatedMetadata.type === 'dropdown' 
+          ? ['Option 1', 'Option 2', 'Option 3'] 
+          : ['Item 1', 'Item 2', 'Item 3'];
       }
     }
     
@@ -582,8 +902,17 @@ const TemplateEditor: React.FC = () => {
       .map(id => allComponents.find(comp => comp.id === id))
       .filter((comp): comp is ComponentMetadata => comp !== undefined);
     
+    // Get the latest content from each section
+    const currentSections = sections.map(section => {
+      const sectionElement = document.getElementById(section.id);
+      return {
+        ...section,
+        content: sectionElement ? sectionElement.innerHTML : section.content
+      };
+    });
+    
     return {
-      content: editorRef.current?.innerHTML || '',
+      sections: currentSections,
       components: orderedVisibleComponents
     };
   };
@@ -663,7 +992,7 @@ const TemplateEditor: React.FC = () => {
           </button>
         </div>
       </div>
-      <div className="flex-grow p-6">
+      <div className="flex-grow p-6 overflow-y-auto">
         {/* Error message toast */}
         {errorMessage && (
           <div className="fixed top-4 right-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded z-50 shadow-md">
@@ -671,21 +1000,79 @@ const TemplateEditor: React.FC = () => {
           </div>
         )}
         
-        <div className="relative">
-          <div
-            ref={editorRef}
-            contentEditable
-            className="p-6 bg-white border border-gray-300 rounded-lg min-h-[60vh] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm text-left"
-            suppressContentEditableWarning
-          />
-          {!hasContent && (
-            <div 
-              ref={placeholderRef}
-              className="absolute top-6 left-6 text-gray-400 pointer-events-none"
-            >
-              Start typing your template here...
+        {/* Sections Container */}
+        <div className="space-y-6">
+          {sections.map((section, index) => (
+            <div key={section.id} className="bg-white border border-gray-300 rounded-lg shadow-sm">
+              {/* Section Header */}
+              <div className="flex items-center justify-between border-b border-gray-200 px-4 py-2 bg-gray-50 rounded-t-lg">
+                <div className="flex-grow">
+                  <input
+                    type="text"
+                    value={section.title}
+                    onChange={(e) => updateSectionTitle(section.id, e.target.value)}
+                    className={`px-2 py-1 bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-500 focus:outline-none w-full ${isLocked ? 'cursor-not-allowed' : ''}`}
+                    placeholder="Section Title (optional)"
+                    disabled={isLocked}
+                  />
+                </div>
+                <div className="flex items-center">
+                  {sections.length > 1 && (
+                    <button
+                      onClick={() => removeSection(section.id)}
+                      className={`ml-2 text-gray-500 hover:text-red-600 p-1 rounded-full hover:bg-red-50 ${isLocked ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      title="Remove section"
+                      disabled={isLocked}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+              </div>
+              
+              {/* Section Content */}
+              <div
+                id={section.id}
+                ref={index === 0 ? editorRef : null}
+                contentEditable={!isLocked}
+                className={`p-6 min-h-[100px] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-left ${
+                  isLocked ? 'bg-gray-50 cursor-not-allowed' : 'bg-white'
+                }`}
+                suppressContentEditableWarning
+                onInput={(e) => {
+                  const content = (e.target as HTMLDivElement).innerHTML;
+                  updateSectionContent(section.id, content);
+                  setHasContent(content.trim().length > 0);
+                }}
+              />
+              
+              {/* Placeholder for empty sections */}
+              {((!section.content || section.content.trim() === '') || (index === 0 && !hasContent)) && (
+                <div 
+                  ref={index === 0 ? placeholderRef : undefined}
+                  className="absolute mt-[-80px] ml-6 text-gray-400 pointer-events-none"
+                >
+                  {index === 0 ? "Start typing your template here..." : "Empty section..."}
+                </div>
+              )}
             </div>
-          )}
+          ))}
+          
+          {/* Add Section Button */}
+          <button
+            onClick={addSection}
+            className={`mt-4 flex items-center justify-center w-full py-3 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:text-gray-700 hover:border-gray-400 focus:outline-none transition-colors ${
+              isLocked ? 'opacity-50 cursor-not-allowed' : ''
+            }`}
+            disabled={isLocked}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            Add Section
+          </button>
         </div>
       </div>
       
@@ -705,6 +1092,7 @@ const TemplateEditor: React.FC = () => {
         isOpen={fillModalOpen}
         onClose={() => setFillModalOpen(false)}
         components={components}
+        sections={sections}
         templateContent={editorRef.current?.innerHTML || ''}
       />
     </div>
