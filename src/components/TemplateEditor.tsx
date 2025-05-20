@@ -71,6 +71,94 @@ const TemplateEditor: React.FC = () => {
     }
   }, [sections.length, initialized]);
   
+  // Helper function to process components in imported content
+  const processImportedComponents = (parentElement: HTMLElement) => {
+    // Find all component elements - some may have data-component attribute, others may just have an ID
+    const allSpans = parentElement.querySelectorAll('span');
+    const processedIds = new Set<string>();
+    let processedCount = 0;
+    
+    // First, try to find elements with data-component attribute
+    const componentElements = parentElement.querySelectorAll('[data-component]');
+    console.log(`Found ${componentElements.length} elements with data-component in content`);
+    
+    // Process elements with the data-component attribute
+    componentElements.forEach(componentEl => {
+      const id = componentEl.getAttribute('data-id');
+      if (!id) return;
+      
+      processElement(componentEl as HTMLElement, id);
+      processedIds.add(id);
+      processedCount++;
+    });
+    
+    // Next, look for elements that have IDs matching components in the store
+    // but might be missing the data-component attribute
+    allSpans.forEach(span => {
+      const id = span.getAttribute('id');
+      if (!id || processedIds.has(id)) return;
+      
+      // Check if this ID exists in the component store
+      const component = componentStore.getComponent(id);
+      if (component) {
+        console.log(`Found component by ID: ${id} (${component.type})`);
+        processElement(span as HTMLElement, id);
+        processedIds.add(id);
+        processedCount++;
+      }
+    });
+    
+    console.log(`Processed ${processedCount} total components in content`);
+    
+    // Helper function to process a single component element
+    function processElement(span: HTMLElement, id: string) {
+      // Get the component metadata from store
+      const component = componentStore.getComponent(id);
+      if (!component) {
+        console.warn(`Component ${id} not found in store during processing`);
+        return;
+      }
+      
+      // Re-apply proper styling and attributes to the component element
+      // Set component attributes
+      span.setAttribute('data-component', 'true');
+      span.setAttribute('data-type', component.type);
+      span.setAttribute('data-id', id);
+      span.setAttribute('title', 'Double-click to edit'); 
+      span.id = id; // Ensure ID is set
+      span.contentEditable = 'false';
+      
+      // Apply correct styling
+      span.className = `relative inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium ${getComponentStyles(component.type)} mx-1 group cursor-pointer`;
+      
+      // Update the label text if needed
+      let labelSpan = span.querySelector('span:not([data-action="delete"])');
+      if (!labelSpan) {
+        // Create label span if it doesn't exist
+        labelSpan = document.createElement('span');
+        span.textContent = ''; // Clear existing text
+        span.appendChild(labelSpan);
+      }
+      labelSpan.textContent = component.label;
+      
+      // Add delete button if missing
+      if (!span.querySelector('[data-action="delete"]')) {
+        const deleteButton = document.createElement('span');
+        deleteButton.className = 'ml-1.5 text-gray-500 hover:text-red-600 cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity';
+        deleteButton.textContent = '×';
+        deleteButton.setAttribute('data-action', 'delete');
+        deleteButton.setAttribute('aria-hidden', 'true'); 
+        deleteButton.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (!isLocked) {
+            removeComponent(id, span);
+          }
+        });
+        span.appendChild(deleteButton);
+      }
+    }
+  };
+
   // Effect to handle populating section content after import or changes
   useEffect(() => {
     // Skip if no sections exist
@@ -124,7 +212,8 @@ const TemplateEditor: React.FC = () => {
     }, 200);
     
     return () => clearTimeout(timeoutId);
-  }, [sections]); // Run whenever sections change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [sections]); // Run whenever sections change
   
   // Function to update a section's title
   const updateSectionTitle = (sectionId: string, title: string) => {
@@ -709,94 +798,6 @@ const TemplateEditor: React.FC = () => {
     
     // Reset file input
     e.target.value = '';
-  };
-  
-  // Helper function to process components in imported content
-  const processImportedComponents = (parentElement: HTMLElement) => {
-    // Find all component elements - some may have data-component attribute, others may just have an ID
-    const allSpans = parentElement.querySelectorAll('span');
-    const processedIds = new Set<string>();
-    let processedCount = 0;
-    
-    // First, try to find elements with data-component attribute
-    const componentElements = parentElement.querySelectorAll('[data-component]');
-    console.log(`Found ${componentElements.length} elements with data-component in content`);
-    
-    // Process elements with the data-component attribute
-    componentElements.forEach(componentEl => {
-      const id = componentEl.getAttribute('data-id');
-      if (!id) return;
-      
-      processElement(componentEl as HTMLElement, id);
-      processedIds.add(id);
-      processedCount++;
-    });
-    
-    // Next, look for elements that have IDs matching components in the store
-    // but might be missing the data-component attribute
-    allSpans.forEach(span => {
-      const id = span.getAttribute('id');
-      if (!id || processedIds.has(id)) return;
-      
-      // Check if this ID exists in the component store
-      const component = componentStore.getComponent(id);
-      if (component) {
-        console.log(`Found component by ID: ${id} (${component.type})`);
-        processElement(span as HTMLElement, id);
-        processedIds.add(id);
-        processedCount++;
-      }
-    });
-    
-    console.log(`Processed ${processedCount} total components in content`);
-    
-    // Helper function to process a single component element
-    function processElement(span: HTMLElement, id: string) {
-      // Get the component metadata from store
-      const component = componentStore.getComponent(id);
-      if (!component) {
-        console.warn(`Component ${id} not found in store during processing`);
-        return;
-      }
-      
-      // Re-apply proper styling and attributes to the component element
-      // Set component attributes
-      span.setAttribute('data-component', 'true');
-      span.setAttribute('data-type', component.type);
-      span.setAttribute('data-id', id);
-      span.setAttribute('title', 'Double-click to edit'); 
-      span.id = id; // Ensure ID is set
-      span.contentEditable = 'false';
-      
-      // Apply correct styling
-      span.className = `relative inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium ${getComponentStyles(component.type)} mx-1 group cursor-pointer`;
-      
-      // Update the label text if needed
-      let labelSpan = span.querySelector('span:not([data-action="delete"])');
-      if (!labelSpan) {
-        // Create label span if it doesn't exist
-        labelSpan = document.createElement('span');
-        span.textContent = ''; // Clear existing text
-        span.appendChild(labelSpan);
-      }
-      labelSpan.textContent = component.label;
-      
-      // Add delete button if missing
-      if (!span.querySelector('[data-action="delete"]')) {
-        const deleteButton = document.createElement('span');
-        deleteButton.className = 'ml-1.5 text-gray-500 hover:text-red-600 cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity';
-        deleteButton.textContent = '×';
-        deleteButton.setAttribute('data-action', 'delete');
-        deleteButton.setAttribute('aria-hidden', 'true'); 
-        deleteButton.addEventListener('click', (e) => {
-          e.stopPropagation();
-          if (!isLocked) {
-            removeComponent(id, span);
-          }
-        });
-        span.appendChild(deleteButton);
-      }
-    }
   };
   
   // Function to trigger file input click
