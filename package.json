@@ -2,7 +2,7 @@
   "name": "template-editor-new",
   "version": "0.1.0",
   "private": true,
-  "homepage": "https://thecasey.github.io/template-editor-new",
+  "homepage": "https://thecasey.github.io/template-editor",
   "dependencies": {
     "@testing-library/dom": "^10.4.0",
     "@testing-library/jest-dom": "^6.6.3",
