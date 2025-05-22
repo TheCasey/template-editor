@@ -1,8 +1,8 @@
 import React, { useRef, useState, useEffect, ChangeEvent, useCallback } from 'react';
 import { componentStore, ComponentType, ComponentMetadata } from '../utils/ComponentStore';
+import { createWalkthroughTemplate, isTemplateEmpty } from '../utils/DefaultTemplate';
 import ComponentModal from './ComponentModal';
 import FillTemplateModal from './FillTemplateModal';
-import { DragDropContext, Droppable, Draggable, DropResult } from 'react-beautiful-dnd';
 
 // Define the template data structure for export/import
 interface TemplateData {
@@ -56,19 +56,23 @@ const TemplateEditor: React.FC = () => {
     setSections(prevSections => [...prevSections, newSection]);
   }, [sections.length]);
   
-  // Initialize with a default section if none exists, but only once
+  // Initialize with a default section or the walkthrough template
   useEffect(() => {
-    // Only add a default section if we have no sections AND we haven't initialized yet
+    // Only initialize if we have no sections AND we haven't initialized yet
     if (sections.length === 0 && !initialized) {
-      const defaultSection: Section = {
-        id: generateSectionId(),
-        title: 'Section 1',
-        content: '',
-        enabled: true // Default section is enabled
-      };
+      // Create a walkthrough template
+      const walkthroughTemplate = createWalkthroughTemplate();
       
-      setSections([defaultSection]);
+      // Set the sections from the walkthrough template
+      setSections(walkthroughTemplate.sections);
+      
+      // Update the components state with the walkthrough components
+      setComponents(walkthroughTemplate.components);
+      
       setInitialized(true);
+      
+      // Show a welcome message
+      setErrorMessage("Welcome to the Template Editor! This walkthrough template will help you get started.");
     }
   }, [sections.length, initialized]);
   
@@ -248,19 +252,27 @@ const TemplateEditor: React.FC = () => {
     ));
   };
   
-  // Handle drag-and-drop reordering of sections
-  const handleDragEnd = (result: DropResult) => {
-    // If dropped outside a droppable area or no movement
-    if (!result.destination || result.destination.index === result.source.index) {
-      return;
-    }
+  // Move a section up in the order
+  const moveSectionUp = (index: number) => {
+    if (index <= 0 || isLocked) return; // Already at the top or locked
     
-    // Reorder the sections array
     const newSections = Array.from(sections);
-    const [movedSection] = newSections.splice(result.source.index, 1);
-    newSections.splice(result.destination.index, 0, movedSection);
+    const temp = newSections[index];
+    newSections[index] = newSections[index - 1];
+    newSections[index - 1] = temp;
     
-    // Update the sections state with the new order
+    setSections(newSections);
+  };
+  
+  // Move a section down in the order
+  const moveSectionDown = (index: number) => {
+    if (index >= sections.length - 1 || isLocked) return; // Already at the bottom or locked
+    
+    const newSections = Array.from(sections);
+    const temp = newSections[index];
+    newSections[index] = newSections[index + 1];
+    newSections[index + 1] = temp;
+    
     setSections(newSections);
   };
   
@@ -1017,140 +1029,134 @@ const TemplateEditor: React.FC = () => {
         )}
         
         {/* Sections Container */}
-        <DragDropContext onDragEnd={handleDragEnd}>
-          <Droppable droppableId="sections-list">
-            {(provided) => (
-              <div 
-                className="space-y-6"
-                ref={provided.innerRef} 
-                {...provided.droppableProps}
-              >
-                {sections.map((section, index) => (
-                  <Draggable 
-                    key={section.id} 
-                    draggableId={section.id} 
-                    index={index}
-                    isDragDisabled={isLocked}
-                  >
-                    {(provided, snapshot) => (
-                      <div 
-                        ref={provided.innerRef}
-                        {...provided.draggableProps}
-                        className={`bg-white border rounded-lg shadow-sm ${
-                          section.enabled === false ? 'border-gray-200' : 'border-gray-300'
-                        }`}
-                        style={{
-                          ...provided.draggableProps.style,
-                          opacity: snapshot.isDragging ? 0.75 : section.enabled === false ? 0.7 : 1,
-                          boxShadow: snapshot.isDragging ? '0 10px 15px -3px rgba(0,0,0,0.1)' : 'none'
-                        }}
-                      >
-                        {/* Section Header */}
-                        <div className={`flex items-center justify-between border-b border-gray-200 px-4 py-2 ${
-                          section.enabled === false ? 'bg-gray-100' : 'bg-gray-50'
-                        } rounded-t-lg`}>
-                          <div className="flex items-center flex-grow">
-                            <div 
-                              {...provided.dragHandleProps} 
-                              className="mr-2 text-gray-400 hover:text-gray-600 cursor-grab p-1 rounded hover:bg-gray-200"
-                              title="Drag to reorder section"
-                            >
-                              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8h16M4 16h16" />
-                              </svg>
-                            </div>
-                            <input
-                              type="text"
-                              value={section.title}
-                              onChange={(e) => updateSectionTitle(section.id, e.target.value)}
-                              className={`px-2 py-1 bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-500 focus:outline-none w-full ${isLocked ? 'cursor-not-allowed' : ''}`}
-                              placeholder="Section Title (optional)"
-                              disabled={isLocked}
-                            />
-                          </div>
-                          <div className="flex items-center space-x-2">
-                            {/* Section Enable/Disable Toggle */}
-                            <label className="inline-flex items-center cursor-pointer" title="Enable/disable this section by default">
-                              <input
-                                type="checkbox"
-                                checked={section.enabled !== false}
-                                onChange={() => toggleSectionEnabled(section.id)}
-                                className="form-checkbox h-4 w-4 text-blue-600 transition duration-150 ease-in-out"
-                                disabled={isLocked}
-                              />
-                              <span className="ml-1 text-xs text-gray-600">
-                                {section.enabled !== false ? "Enabled" : "Disabled"}
-                              </span>
-                            </label>
-                            
-                            {/* Delete Section Button */}
-                            {sections.length > 1 && (
-                              <button
-                                onClick={() => removeSection(section.id)}
-                                className={`text-gray-500 hover:text-red-600 p-1 rounded-full hover:bg-red-50 ${isLocked ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                title="Remove section"
-                                disabled={isLocked}
-                              >
-                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                </svg>
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                        
-                        {/* Section Content */}
-                                        <div
-                  id={section.id}
-                  ref={index === 0 ? editorRef : null}
-                  contentEditable={!isLocked}
-                  className={`p-6 min-h-[100px] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-left ${
-                    isLocked 
-                      ? 'bg-gray-50 cursor-not-allowed' 
-                      : section.enabled === false 
-                        ? 'bg-gray-50' 
-                        : 'bg-white'
-                  }`}
-                          suppressContentEditableWarning
-                          onInput={(e) => {
-                            const content = (e.target as HTMLDivElement).innerHTML;
-                            updateSectionContent(section.id, content);
-                            setHasContent(content.trim().length > 0);
-                          }}
-                        />
-                        
-                        {/* Placeholder for empty sections */}
-                        {((!section.content || section.content.trim() === '') || (index === 0 && !hasContent)) && (
-                          <div 
-                            ref={index === 0 ? placeholderRef : undefined}
-                            className="absolute mt-[-80px] ml-6 text-gray-400 pointer-events-none"
-                          >
-                            {index === 0 ? "Start typing your template here..." : "Empty section..."}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </Draggable>
-                ))}
-                {provided.placeholder}
-                
-                {/* Add Section Button */}
-                <button
-                  onClick={addSection}
-                  className={`mt-4 flex items-center justify-center w-full py-3 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:text-gray-700 hover:border-gray-400 focus:outline-none transition-colors ${
-                    isLocked ? 'opacity-50 cursor-not-allowed' : ''
-                  }`}
-                  disabled={isLocked}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                  </svg>
-                  Add Section
-                </button>
+        <div className="space-y-6">
+          {sections.map((section, index) => (
+            <div key={section.id} className={`bg-white border rounded-lg shadow-sm ${
+              section.enabled === false ? 'opacity-70 border-gray-200' : 'border-gray-300'
+            }`}>
+              {/* Section Header */}
+              <div className={`flex items-center justify-between border-b border-gray-200 px-4 py-2 ${
+                section.enabled === false ? 'bg-gray-100' : 'bg-gray-50'
+              } rounded-t-lg`}>
+                <div className="flex items-center flex-grow">
+                  <div className="flex mr-2">
+                    {/* Move Up Button */}
+                    <button
+                      onClick={() => moveSectionUp(index)}
+                      disabled={index === 0 || isLocked}
+                      className={`p-1 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-200 mr-1 ${
+                        index === 0 || isLocked ? 'opacity-30 cursor-not-allowed' : ''
+                      }`}
+                      title="Move section up"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
+                      </svg>
+                    </button>
+                    
+                    {/* Move Down Button */}
+                    <button
+                      onClick={() => moveSectionDown(index)}
+                      disabled={index === sections.length - 1 || isLocked}
+                      className={`p-1 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-200 ${
+                        index === sections.length - 1 || isLocked ? 'opacity-30 cursor-not-allowed' : ''
+                      }`}
+                      title="Move section down"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                      </svg>
+                    </button>
+                  </div>
+                  <input
+                    type="text"
+                    value={section.title}
+                    onChange={(e) => updateSectionTitle(section.id, e.target.value)}
+                    className={`px-2 py-1 bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-500 focus:outline-none w-full ${isLocked ? 'cursor-not-allowed' : ''}`}
+                    placeholder="Section Title (optional)"
+                    disabled={isLocked}
+                  />
+                </div>
+                <div className="flex items-center space-x-2">
+                  {/* Section Enable/Disable Toggle */}
+                  <label className="inline-flex items-center cursor-pointer" title="Enable/disable this section by default">
+                    <input
+                      type="checkbox"
+                      checked={section.enabled !== false}
+                      onChange={() => toggleSectionEnabled(section.id)}
+                      className="form-checkbox h-4 w-4 text-blue-600 transition duration-150 ease-in-out"
+                      disabled={isLocked}
+                    />
+                    <span className="ml-1 text-xs text-gray-600">
+                      {section.enabled !== false ? "Enabled" : "Disabled"}
+                    </span>
+                  </label>
+                  
+                  {/* Delete Section Button */}
+                  {sections.length > 1 && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeSection(section.id);
+                      }}
+                      className={`text-gray-500 hover:text-red-600 p-1 rounded-full hover:bg-red-50 ${isLocked ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      title="Remove section"
+                      disabled={isLocked}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
               </div>
-            )}
-          </Droppable>
-        </DragDropContext>
+              
+              {/* Section Content */}
+              <div
+                id={section.id}
+                ref={index === 0 ? editorRef : null}
+                contentEditable={!isLocked}
+                className={`p-6 min-h-[100px] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-left ${
+                  isLocked 
+                    ? 'bg-gray-50 cursor-not-allowed' 
+                    : section.enabled === false 
+                      ? 'bg-gray-50' 
+                      : 'bg-white'
+                }`}
+                suppressContentEditableWarning
+                onInput={(e) => {
+                  const content = (e.target as HTMLDivElement).innerHTML;
+                  updateSectionContent(section.id, content);
+                  setHasContent(content.trim().length > 0);
+                }}
+              />
+              
+              {/* Placeholder for empty sections */}
+              {((!section.content || section.content.trim() === '') || (index === 0 && !hasContent)) && (
+                <div 
+                  ref={index === 0 ? placeholderRef : undefined}
+                  className="absolute mt-[-80px] ml-6 text-gray-400 pointer-events-none"
+                >
+                  {index === 0 ? "Start typing your template here..." : "Empty section..."}
+                </div>
+              )}
+            </div>
+          ))}
+          
+          {/* Add Section Button */}
+          <button
+            onClick={addSection}
+            className={`mt-4 flex items-center justify-center w-full py-3 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:text-gray-700 hover:border-gray-400 focus:outline-none transition-colors ${
+              isLocked ? 'opacity-50 cursor-not-allowed' : ''
+            }`}
+            disabled={isLocked}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            Add Section
+          </button>
+        </div>
       </div>
       
       {/* Component Edit Modal */}
