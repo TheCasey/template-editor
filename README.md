@@ -1,69 +1,44 @@
-# Getting Started with Create React App
+# Template Editor
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+A browser-based editor for reusable text templates. Build sections, insert configurable fields, fill a template, and copy the resulting text. Templates can be exported and imported as JSON.
 
-## Available Scripts
+**Status:** prototype. This project uses React, TypeScript, Tailwind CSS, and Create React App. Its existing test file is a starter test that expects a “learn react” link no longer present in the app; it does not establish coverage of the editor.
 
-In the project directory, you can run:
+## Main workflows
 
-### `npm start`
+- Start from the built-in walkthrough template.
+- Create and edit template sections and field components.
+- Fill fields through a separate form.
+- Export a template to JSON and import it into a new session.
+- Copy filled text to the clipboard.
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in the browser.
+## Run locally
 
-The page will reload if you make edits.\
-You will also see any lint errors in the console.
+```sh
+npm ci
+npm start
+```
 
-### `npm test`
+The standard `npm ci` installation currently fails with a peer-dependency conflict: the project uses React 19 while `react-beautiful-dnd@13.1.1` declares support through React 18. Resolve the dependency versions before treating the quick-start path as working. The development server, once installation is repaired, normally opens at `http://localhost:3000`.
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+```sh
+npm run build
+CI=true npm test -- --watchAll=false
+```
 
-### `npm run build`
+The build output is `build/`. The test command runs the existing suite once; the starter assertion needs replacement before test results can serve as a useful editor regression check. Dependencies and React compatibility should be reviewed before treating this prototype as a maintained release.
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+## QA review
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+The most valuable manual checks are JSON export/import round trips, field validation, section editing, and clipboard output. See [the test plan](docs/qa-checklist.md). These cases are proposed checks, not recorded test passes.
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+## Repository map
 
-### `npm run deploy`
+- `src/components/TemplateEditor.tsx`: editor and JSON import/export.
+- `src/components/ComponentModal.tsx`: field configuration.
+- `src/components/FillTemplateModal.tsx`: filling fields and copying text.
+- `src/utils/`: field metadata store and walkthrough template.
 
-Deploys the app to GitHub Pages. This command builds the app and then pushes the build folder to the gh-pages branch of your GitHub repository.
+## Boundaries
 
-## GitHub Pages Deployment
-
-This project is configured for deployment to GitHub Pages. Follow these steps to deploy:
-
-1. Update the `homepage` field in `package.json` with your GitHub username and repository name:
-   ```
-   "homepage": "https://your-username.github.io/template-editor-new"
-   ```
-
-2. Run `npm run deploy` to build and deploy the app to the gh-pages branch.
-
-3. Go to your GitHub repository's Settings → Pages:
-   - Set Source to "Deploy from a branch"
-   - Select the "gh-pages" branch
-   - Set folder to "/ (root)"
-   - Click Save
-
-Your app should now be available at the URL specified in the homepage field.
-
-### `npm run eject`
-
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
-
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
-
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
-
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
-
-## Learn More
-
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
+There is no account or cloud-sync service in this project. Export a JSON copy to preserve a template across sessions. Clipboard behavior depends on browser permissions and context. A GitHub Pages deployment script is configured in `package.json`; this README does not claim a current live deployment.
